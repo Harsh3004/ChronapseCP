@@ -45,16 +45,26 @@ async function disconnectDB() {
 }
 
 async function fetchContests() {
-  console.log('🌐 Fetching contests from Kontests API…');
+  console.log('🌐 Fetching contests from official Codeforces API…');
 
-  const response = await axios.get(KONTESTS_API_URL, { timeout: 60000 });
+  const response = await axios.get('https://codeforces.com/api/contest.list', { timeout: 15000 });
 
-  if (!Array.isArray(response.data)) {
+  if (response.data.status !== 'OK' || !Array.isArray(response.data.result)) {
     throw new Error(`Unexpected API response shape: ${JSON.stringify(response.data).slice(0, 200)}`);
   }
 
-  console.log(`   └─ Received ${response.data.length} total contests from API.`);
-  return response.data;
+  const upcomingCF = response.data.result.filter(contest => contest.phase === 'BEFORE');
+
+  const mappedContests = upcomingCF.map(c => {
+    return {
+      name: c.name,
+      site: 'CodeForces',
+      start_time: new Date(c.startTimeSeconds * 1000).toISOString()
+    };
+  });
+
+  console.log(`   └─ Received ${mappedContests.length} total upcoming contests from API.`);
+  return mappedContests;
 }
 
 function filterContests(contests) {
