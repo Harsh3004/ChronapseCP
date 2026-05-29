@@ -47,7 +47,7 @@ async function disconnectDB() {
 async function fetchContests() {
   console.log('🌐 Fetching contests from Kontests API…');
 
-  const response = await axios.get(KONTESTS_API_URL, { timeout: 15_000 });
+  const response = await axios.get(KONTESTS_API_URL, { timeout: 60000 });
 
   if (!Array.isArray(response.data)) {
     throw new Error(`Unexpected API response shape: ${JSON.stringify(response.data).slice(0, 200)}`);
