@@ -6,8 +6,6 @@ import { google } from 'googleapis';
 
 import Contest from './database/Contest.js';
 
-const KONTESTS_API_URL = 'https://kontests.net/api/v1/all';
-const ALLOWED_PLATFORMS = ['LeetCode', 'CodeForces'];
 const NOTIFICATION_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours in ms
 
 //Build a contest ID
@@ -149,7 +147,15 @@ async function createCalendarEvent(contest) {
 async function sendWhatsAppReminder(contest) {
   const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
 
-  const startFormatted = contest.startTime.toUTCString();
+  const startFormatted = contest.startTime.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    weekday: 'short',  
+    month: 'short',    
+    day: 'numeric',    
+    hour: 'numeric',   
+    minute: '2-digit', 
+    hour12: true       
+  }) + ' IST';
 
   // The WhatsApp message
   const body = [
