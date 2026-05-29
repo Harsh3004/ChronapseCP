@@ -1,0 +1,23 @@
+{
+  "name": "chronapsecp",
+  "version": "1.0.0",
+  "description": "Automated competitive programming contest tracker — fetches contests, saves to MongoDB, adds to Google Calendar, and sends WhatsApp reminders via Twilio.",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "axios": "^1.7.2",
+    "dotenv": "^16.4.5",
+    "googleapis": "^140.0.1",
+    "mongoose": "^8.4.1",
+    "twilio": "^5.2.0"
+  },
+  "author": "ChronapseCP",
+  "license": "MIT"
+}
