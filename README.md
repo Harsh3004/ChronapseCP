@@ -10,7 +10,7 @@
 [![Twilio](https://img.shields.io/badge/Twilio-F22F46?style=for-the-badge&logo=twilio&logoColor=white)](https://www.twilio.com/)
 [![Google Calendar](https://img.shields.io/badge/Google_Calendar-4285F4?style=for-the-badge&logo=google-calendar&logoColor=white)](https://calendar.google.com/)
 
-> An automated, **100% free** competitive programming contest tracker. It fetches upcoming **Codeforces** contests, saves them to MongoDB, syncs them with your Google Calendar, and sends a **WhatsApp reminder** 24 hours before they start — all powered by GitHub Actions.
+> An automated, **100% free** competitive programming contest tracker. It fetches upcoming **Codeforces** and **LeetCode** contests, saves them to MongoDB, syncs them with your Google Calendar, and sends a **WhatsApp reminder** 24 hours before they start — all powered by GitHub Actions.
 
 ---
 
@@ -22,7 +22,7 @@
   <tr>
     <td width="50%" valign="top">
       <h3>📅 Google Calendar Sync</h3>
-      Automatically pushes new Codeforces contests to your Google Calendar so you can block out time for your competitive programming sessions without manual data entry.
+      Automatically pushes new Codeforces and LeetCode contests to your Google Calendar so you can block out time for your competitive programming sessions without manual data entry.
     </td>
     <td width="50%" valign="top">
       <h3>📱 WhatsApp Reminders</h3>
@@ -53,11 +53,13 @@ The orchestration script runs automatically. Here is how the data flows every ho
         ▼
     index.js
         │
-        ├─► Codeforces API  ─────────── [1] Fetch upcoming contests
+        ├─► Codeforces API  ──────────┐
+        │                             ├─ [1] Fetch upcoming contests concurrently
+        ├─► LeetCode GraphQL API ─────┘
         │
-        ├─► MongoDB Atlas   ─────────── [2] Deduplicate (skip if already in DB)
+        ├─► MongoDB Atlas   ──────────── [2] Deduplicate (skip if already in DB)
         │
-        ├─► Google Calendar API ─────── [3] Create calendar event for NEW contests
+        ├─► Google Calendar API ──────── [3] Create calendar event for NEW contests
         │
-        └─► Twilio WhatsApp Sandbox ─── [4] Send reminder if contest < 24h away 
-                                            (Marks 'notified: true' to avoid spam)
+        └─► Twilio WhatsApp Sandbox ──── [4] Send reminder if contest < 24h away 
+                                             (Marks 'notified: true' to avoid spam)

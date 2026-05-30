@@ -3,18 +3,16 @@ import axios from 'axios';
 import mongoose from 'mongoose';
 import twilio from 'twilio';
 import { google } from 'googleapis';
-
+import dns from 'dns';
 import Contest from './database/Contest.js';
 
 const NOTIFICATION_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours in ms
 
-//Build a contest ID
 function buildContestId(platform, name, startTime) {
   const sanitised = name.replace(/[^a-zA-Z0-9-]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
   return `${platform}_${sanitised}_${startTime.getTime()}`;
 }
 
-//Authenticate with Google Calendar via Service Account JWT
 function getCalendarClient() {
   const auth = new google.auth.JWT({
     email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
@@ -26,6 +24,8 @@ function getCalendarClient() {
 }
 
 async function connectDB() {
+  // FORCE Node.js to use Google's Public DNS servers
+  dns.setServers(['8.8.8.8', '8.8.4.4']);
   const uri = process.env.MONGO_URI;
   if (!uri) throw new Error('MONGO_URI environment variable is not set.');
 
@@ -42,27 +42,73 @@ async function disconnectDB() {
   console.log('✅ MongoDB connection closed.');
 }
 
-async function fetchContests() {
+async function fetchCodeforces() {
   console.log('🌐 Fetching contests from official Codeforces API…');
+  try {
+    const response = await axios.get('https://codeforces.com/api/contest.list', { timeout: 15000 });
 
-  const response = await axios.get('https://codeforces.com/api/contest.list', { timeout: 15000 });
+    if (response.data.status !== 'OK' || !Array.isArray(response.data.result)) {
+      throw new Error('Unexpected Codeforces API response shape.');
+    }
 
-  if (response.data.status !== 'OK' || !Array.isArray(response.data.result)) {
-    throw new Error(`Unexpected API response shape: ${JSON.stringify(response.data).slice(0, 200)}`);
-  }
-
-  const upcomingCF = response.data.result.filter(contest => contest.phase === 'BEFORE');
-
-  const mappedContests = upcomingCF.map(c => {
-    return {
+    const upcomingCF = response.data.result.filter(contest => contest.phase === 'BEFORE');
+    const mappedCF = upcomingCF.map(c => ({
       name: c.name,
       site: 'CodeForces',
       start_time: new Date(c.startTimeSeconds * 1000).toISOString()
-    };
-  });
+    }));
 
-  console.log(`   └─ Received ${mappedContests.length} total upcoming contests from API.`);
-  return mappedContests;
+    console.log(`   └─ Received ${mappedCF.length} upcoming Codeforces contests.`);
+    return mappedCF;
+  } catch (error) {
+    console.error(`   └─ ⚠️ Error fetching Codeforces: ${error.message}`);
+    return []; 
+  }
+}
+
+async function fetchLeetCode() {
+  console.log('🌐 Fetching contests from LeetCode GraphQL API…');
+  try {
+    const response = await axios.post('https://leetcode.com/graphql', {
+      query: `
+        {
+          allContests {
+            title
+            startTime
+          }
+        }
+      `
+    }, { timeout: 15000 });
+
+    const contests = response.data.data.allContests;
+    const nowSeconds = Math.floor(Date.now() / 1000);
+
+    const upcomingLC = contests.filter(c => c.startTime > nowSeconds);
+
+    const mappedLC = upcomingLC.map(c => ({
+      name: c.title,
+      site: 'LeetCode',
+      start_time: new Date(c.startTime * 1000).toISOString() 
+    }));
+
+    console.log(`   └─ Received ${mappedLC.length} upcoming LeetCode contests.`);
+    return mappedLC;
+  } catch (error) {
+    console.error(`   └─ ⚠️ Error fetching LeetCode: ${error.message}`);
+    return []; 
+  }
+}
+
+async function fetchContests() {
+  const [cfContests, lcContests] = await Promise.all([
+    fetchCodeforces(),
+    fetchLeetCode()
+  ]);
+
+  const allContests = [...cfContests, ...lcContests];
+  console.log(`✅ Combined total: ${allContests.length} upcoming contests fetched.`);
+  
+  return allContests;
 }
 
 function filterContests(contests) {
