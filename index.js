@@ -6,7 +6,7 @@ import { google } from 'googleapis';
 import dns from 'dns';
 import Contest from './database/Contest.js';
 
-const NOTIFICATION_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours in ms
+const NOTIFICATION_WINDOW_MS = 25 * 60 * 60 * 1000; // 25 hours in ms (24h + 1h safety buffer for twice-daily runs)
 
 function buildContestId(platform, name, startTime) {
   const sanitised = name.replace(/[^a-zA-Z0-9-]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
@@ -55,7 +55,9 @@ async function fetchCodeforces() {
     const mappedCF = upcomingCF.map(c => ({
       name: c.name,
       site: 'CodeForces',
-      start_time: new Date(c.startTimeSeconds * 1000).toISOString()
+      start_time: new Date(c.startTimeSeconds * 1000).toISOString(),
+      end_time: c.durationSeconds ? new Date((c.startTimeSeconds + c.durationSeconds) * 1000).toISOString() : null,
+      url: `https://codeforces.com/contest/${c.id}`
     }));
 
     console.log(`   └─ Received ${mappedCF.length} upcoming Codeforces contests.`);
@@ -74,13 +76,15 @@ async function fetchLeetCode() {
         {
           allContests {
             title
+            titleSlug
             startTime
+            duration
           }
         }
       `
     }, { timeout: 15000 });
 
-    const contests = response.data.data.allContests;
+    const contests = response.data?.data?.allContests || [];
     const nowSeconds = Math.floor(Date.now() / 1000);
 
     const upcomingLC = contests.filter(c => c.startTime > nowSeconds);
@@ -88,7 +92,9 @@ async function fetchLeetCode() {
     const mappedLC = upcomingLC.map(c => ({
       name: c.title,
       site: 'LeetCode',
-      start_time: new Date(c.startTime * 1000).toISOString() 
+      start_time: new Date(c.startTime * 1000).toISOString(),
+      end_time: c.duration ? new Date((c.startTime + c.duration) * 1000).toISOString() : null,
+      url: c.titleSlug ? `https://leetcode.com/contest/${c.titleSlug}` : 'https://leetcode.com/contest/'
     }));
 
     console.log(`   └─ Received ${mappedLC.length} upcoming LeetCode contests.`);
@@ -99,15 +105,53 @@ async function fetchLeetCode() {
   }
 }
 
+async function fetchCodeChef() {
+  console.log('🌐 Fetching contests from official CodeChef API…');
+  try {
+    const response = await axios.get('https://www.codechef.com/api/list/contests/all', {
+      timeout: 15000,
+      headers: {
+        'User-Agent': 'ChronapseCP/1.0',
+        'Accept': 'application/json'
+      }
+    });
+
+    const futureContests = response.data?.future_contests;
+    if (!Array.isArray(futureContests)) {
+      throw new Error('Unexpected CodeChef API response shape.');
+    }
+
+    const mappedCC = futureContests.map(c => ({
+      name: c.contest_name,
+      site: 'CodeChef',
+      start_time: c.contest_start_date_iso || new Date(c.contest_start_date).toISOString(),
+      end_time: c.contest_end_date_iso || (c.contest_end_date ? new Date(c.contest_end_date).toISOString() : null),
+      url: c.contest_code ? `https://www.codechef.com/${c.contest_code}` : 'https://www.codechef.com/contests'
+    }));
+
+    console.log(`   └─ Received ${mappedCC.length} upcoming CodeChef contests.`);
+    return mappedCC;
+  } catch (error) {
+    console.error(`   └─ ⚠️ Error fetching CodeChef: ${error.message}`);
+    return [];
+  }
+}
+
 async function fetchContests() {
-  const [cfContests, lcContests] = await Promise.all([
+  const results = await Promise.allSettled([
     fetchCodeforces(),
-    fetchLeetCode()
+    fetchLeetCode(),
+    fetchCodeChef()
   ]);
 
-  const allContests = [...cfContests, ...lcContests];
+  const allContests = [];
+  for (const res of results) {
+    if (res.status === 'fulfilled' && Array.isArray(res.value)) {
+      allContests.push(...res.value);
+    }
+  }
+
   console.log(`✅ Combined total: ${allContests.length} upcoming contests fetched.`);
-  
   return allContests;
 }
 
@@ -116,18 +160,29 @@ function filterContests(contests) {
     const site = (c.site || '').toLowerCase();
     return (
       site.includes('leetcode') ||
-      site.includes('codeforces')
+      site.includes('codeforces') ||
+      site.includes('codechef')
     );
   });
 
-  console.log(`🔍 Filtered to ${filtered.length} LeetCode / CodeForces contests.`);
+  console.log(`🔍 Filtered to ${filtered.length} LeetCode / CodeForces / CodeChef contests.`);
   return filtered;
 }
 
 function normaliseContest(raw) {
   try {
     const site = (raw.site || '').toLowerCase();
-    const platform = site.includes('leetcode') ? 'LeetCode' : 'CodeForces';
+    let platform = 'Unknown';
+    if (site.includes('leetcode')) {
+      platform = 'LeetCode';
+    } else if (site.includes('codeforces')) {
+      platform = 'CodeForces';
+    } else if (site.includes('codechef')) {
+      platform = 'CodeChef';
+    } else {
+      throw new Error(`Unsupported platform: ${raw.site}`);
+    }
+
     const name = (raw.name || '').trim();
     const startTime = new Date(raw.start_time);
     const endTime = raw.end_time ? new Date(raw.end_time) : null;
@@ -204,16 +259,25 @@ async function sendWhatsAppReminder(contest) {
   }) + ' IST';
 
   // The WhatsApp message
-  const body = [
+  const lines = [
     '⏰ *ChronapseCP — Contest Reminder*',
     '━━━━━━━━━━━━━━━━━━━━━━',
     `🖥️  *Platform :* ${contest.platform}`,
     `🏆 *Contest  :* ${contest.name}`,
     `🕐 *Starts   :* ${startFormatted}`,
+  ];
+
+  if (contest.url) {
+    lines.push(`🔗 *Link     :* ${contest.url}`);
+  }
+
+  lines.push(
     '━━━━━━━━━━━━━━━━━━━━━━',
     '🚀 Contest starts in *less than 24 hours!*',
-    'Get your IDE ready and good luck! 💪',
-  ].join('\n');
+    'Get your IDE ready and good luck! 💪'
+  );
+
+  const body = lines.join('\n');
 
   await client.messages.create({
     from: 'whatsapp:+14155238886',      // Twilio Sandbox number (fixed).
@@ -227,7 +291,7 @@ async function sendWhatsAppReminder(contest) {
 
 async function main() {
   console.log('═══════════════════════════════════════════');
-  console.log('  ChronapseCP — Hourly Sync Starting…');
+  console.log('  ChronapseCP — Twice-Daily Sync Starting…');
   console.log(`  UTC Time: ${new Date().toUTCString()}`);
   console.log('═══════════════════════════════════════════\n');
 
@@ -243,29 +307,43 @@ async function main() {
     const filtered = filterContests(rawContests);
 
     if (filtered.length === 0) {
-      console.log('ℹ️  No upcoming LeetCode or CodeForces contests found. Exiting.');
+      console.log('ℹ️  No upcoming LeetCode, CodeForces, or CodeChef contests found. Exiting.');
       return;
     }
 
     const now = new Date();
     const reminderCutoff = new Date(now.getTime() + NOTIFICATION_WINDOW_MS);
 
+    // Normalise and deduplicate within the fetched batch
+    const candidateContests = [];
     for (const raw of filtered) {
       const contest = normaliseContest(raw);
-
       if (!contest) {
         skipped++;
         continue;
       }
 
       const contestId = buildContestId(contest.platform, contest.name, contest.startTime);
+      candidateContests.push({ ...contest, contestId });
+    }
+
+    if (candidateContests.length === 0) {
+      console.log('ℹ️  No valid upcoming contests after normalisation. Exiting.');
+      return;
+    }
+
+    // Batch database lookup: O(1) roundtrip to MongoDB Atlas
+    const candidateIds = candidateContests.map((c) => c.contestId);
+    const existingDocs = await Contest.find({ contestId: { $in: candidateIds } });
+    const existingMap = new Map(existingDocs.map((doc) => [doc.contestId, doc]));
+
+    for (const contest of candidateContests) {
+      const { contestId } = contest;
 
       try {
-        
-        const existing = await Contest.findOne({ contestId });
+        const existing = existingMap.get(contestId);
 
         if (!existing) {
-        
           console.log(`\n📅 NEW  | ${contest.platform}: ${contest.name}`);
 
           let calendarEventId = null;
@@ -278,30 +356,55 @@ async function main() {
             errors.push(`[Calendar] ${contest.name}: ${calErr.message}`);
           }
 
-          await Contest.create({
+          const created = await Contest.create({
             contestId,
             name: contest.name,
             platform: contest.platform,
             startTime: contest.startTime,
+            endTime: contest.endTime,
+            url: contest.url,
             calendarEventId,
             notified: false,
           });
 
           console.log(`   └─ 💾 Saved to MongoDB.`);
           newContests++;
+
+          // Check if newly discovered contest starts within reminder window
+          const startsSoon = contest.startTime > now && contest.startTime <= reminderCutoff;
+          if (startsSoon) {
+            console.log(`\n📲 REMIND (Immediate) | ${contest.platform}: ${contest.name}`);
+            try {
+              await sendWhatsAppReminder(created);
+              await Contest.updateOne(
+                { contestId },
+                { $set: { notified: true } }
+              );
+              console.log(`   └─ ✅ Marked as notified in MongoDB.`);
+              remindersDispatched++;
+            } catch (twilioErr) {
+              console.error(`   └─ ❌ WhatsApp send failed: ${twilioErr.message}`);
+              errors.push(`[Twilio] ${contest.name}: ${twilioErr.message}`);
+            }
+          }
         } else {
-          const startsWithin24h =
+          const startsWithinWindow =
             existing.startTime > now && existing.startTime <= reminderCutoff;
 
-          if (startsWithin24h && !existing.notified) {
+          if (startsWithinWindow && !existing.notified) {
             console.log(`\n📲 REMIND | ${existing.platform}: ${existing.name}`);
 
             try {
+              // Ensure existing contest has url if not previously saved
+              if (!existing.url && contest.url) {
+                existing.url = contest.url;
+              }
+
               await sendWhatsAppReminder(existing);
 
               await Contest.updateOne(
                 { contestId },
-                { $set: { notified: true } }
+                { $set: { notified: true, ...(contest.url ? { url: contest.url } : {}) } }
               );
 
               console.log(`   └─ ✅ Marked as notified in MongoDB.`);
@@ -313,7 +416,7 @@ async function main() {
           } else {
             const reason = existing.notified
               ? 'already notified'
-              : `starts at ${existing.startTime.toUTCString()} (outside 24h window)`;
+              : `starts at ${existing.startTime.toUTCString()} (outside reminder window)`;
             console.log(`   ⏩ SKIP | ${existing.platform}: ${existing.name} — ${reason}`);
           }
         }

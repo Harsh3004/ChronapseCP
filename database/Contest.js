@@ -31,8 +31,21 @@ const contestSchema = new mongoose.Schema(
       default: null,
     },
 
+    // Contest URL if available
+    url: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+
+    // Estimated end time of the contest
+    endTime: {
+      type: Date,
+      default: null,
+    },
+
     // Tracks whether the 24-hour WhatsApp reminder has been dispatched
-    // Prevents duplicate notifications on subsequent hourly runs
+    // Prevents duplicate notifications on subsequent sync runs
     notified: {
       type: Boolean,
       default: false,

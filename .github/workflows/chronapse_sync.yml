@@ -1,9 +1,9 @@
-name: ChronapseCP — Hourly Contest Sync
+name: ChronapseCP — Twice-Daily Contest Sync
 
 on:
-  # Scheduled trigger: runs at the top of every hour (UTC)
+  # Scheduled trigger: runs twice daily at 02:30 UTC & 14:30 UTC (08:00 AM & 08:00 PM IST)
   schedule:
-    - cron: '0 * * * *'
+    - cron: '30 2,14 * * *'
 
   # Manual trigger: lets you run the workflow from the Actions tab anytime
   workflow_dispatch:
